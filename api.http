@@ -1,0 +1,23 @@
+### Tes API dengan ekstensi "REST Client" (humao.rest-client) di VS Code
+@host = http://localhost:3000
+
+GET {{host}}/api/health
+
+###
+GET {{host}}/api/reports
+
+###
+GET {{host}}/api/stats?hours=24
+
+###
+POST {{host}}/api/reports
+Content-Type: application/json
+# x-api-key: ISI_JIKA_API_KEY_AKTIF
+
+{ "jenis": "pencurian", "lat": -7.2575, "lng": 112.7452, "no_pelanggan": "PLG-123456" }
+
+###
+POST {{host}}/api/import
+Content-Type: application/json
+
+{ "mode": "append", "rows": [ { "id_meter": "MTR-1", "jenis": "hilang", "lat": -7.30, "lng": 112.74, "waktu_lapor": "2026-10-23T07:30:00" } ] }

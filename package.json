@@ -1,0 +1,13 @@
+{
+  "name": "meter-hilang-gis",
+  "version": "1.0.0",
+  "description": "Dashboard GIS Meter Hilang & Pencurian Air (Surya Sembada) – frontend Leaflet + server Node tanpa dependensi",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "reset": "node -e \"require('fs').rmSync('data/reports.json',{force:true});console.log('Data dihapus, akan di-seed ulang saat server start')\""
+  },
+  "engines": { "node": ">=18" },
+  "license": "MIT"
+}

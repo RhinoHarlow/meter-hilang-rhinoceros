@@ -1,0 +1,8 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "Start server (npm start)", "type": "npm", "script": "start", "problemMatcher": [], "group": { "kind": "build", "isDefault": true } },
+    { "label": "Dev (auto-restart)", "type": "npm", "script": "dev", "problemMatcher": [] },
+    { "label": "Reset data", "type": "npm", "script": "reset", "problemMatcher": [] }
+  ]
+}
