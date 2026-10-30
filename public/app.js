@@ -7,6 +7,55 @@ const T = {
   pencurian: { n: "Pencurian Air", s: "Pencurian", c: "#fb923c", ic: "🚨", t: "tsi.pencurian_air" }
 };
 let P = [], LY = { hilang: 1, pencurian: 1, zona: 1, heat: 0 }, rng = 24, addMode = 0, ref = Date.now();
+// ===== DETEKSI LAPORAN BARU =====
+let alarmInitialized = false;
+let knownReportIds = new Set();
+let alarmQueue = [];
+let activeAlarm = null;
+function showAlarm(p) {
+  const popup = $("#alarmPopup");
+  if (!popup || !p) return;
+
+  const pencurian = p.k === "pencurian";
+  const t = T[p.k];
+
+  if (!t) return;
+
+  popup.classList.toggle("pencurian", pencurian);
+  $("#alarmIcon").textContent = pencurian ? "🚨" : "🔴";
+  $("#alarmTitle").textContent = pencurian
+    ? "ALARM PENCURIAN AIR"
+    : "ALARM METER HILANG";
+
+  $("#alarmMessage").textContent =
+    `${t.n} — ${p.pel || "Pelanggan tidak diketahui"}`;
+
+  $("#alarmDetail").textContent =
+    `ID: ${p.id} | Kecamatan: ${p.d || "-"} | ` +
+    `Waktu: ${new Date(p.ts).toLocaleString("id-ID")}`;
+
+  activeAlarm = p;
+  popup.hidden = false;
+}
+
+function closeAlarm() {
+  $("#alarmPopup").hidden = true;
+  activeAlarm = null;
+
+  // Tampilkan alarm berikutnya jika masih ada antrean.
+  if (alarmQueue.length) {
+    showAlarm(alarmQueue.shift());
+  }
+}
+
+$("#alarmClose").onclick = closeAlarm;
+
+$("#alarmFocus").onclick = () => {
+  if (!activeAlarm) return;
+
+  map.flyTo([activeAlarm.lat, activeAlarm.lng], 16);
+  closeAlarm();
+};
 
 // ---------- API ----------
 async function api(url, opt = {}) {
@@ -25,7 +74,9 @@ function demo() {
 
 async function load(first) {
   try {
-    P = (await api('/api/reports')).map(r => ({
+    const rows = await api('/api/reports');
+
+    const nextReports = rows.map(r => ({
       id: r.id,
       pel: r.no_pelanggan,
       k: r.jenis,
@@ -36,6 +87,29 @@ async function load(first) {
       pet: r.petugas,
       st: r.status
     }));
+
+    // Data pertama menjadi baseline; jangan alarm data lama.
+    if (!alarmInitialized) {
+      knownReportIds = new Set(nextReports.map(p => String(p.id)));
+      alarmInitialized = true;
+    } else {
+      // Deteksi ID yang belum pernah terlihat.
+      const newReports = nextReports.filter(
+        p => !knownReportIds.has(String(p.id))
+      );
+
+      nextReports.forEach(p => knownReportIds.add(String(p.id)));
+
+      // Masukkan laporan baru ke antrean alarm.
+      newReports.forEach(p => alarmQueue.push(p));
+
+      // Tampilkan alarm pertama jika tidak ada alarm aktif.
+      if (!activeAlarm && alarmQueue.length) {
+        showAlarm(alarmQueue.shift());
+      }
+    }
+
+    P = nextReports;
 
     const newest = P.length
       ? Math.max(...P.map(p => p.ts))
@@ -62,8 +136,6 @@ async function load(first) {
       "⚠ Server tidak terdeteksi. Jalankan 'npm start' lalu buka http://localhost:3000 (bukan lewat Live Server).";
   }
 }
-
-
 // ---------- peta ----------
 const map = L.map("map", { zoomControl: false }).setView([-7.2756, 112.7426], 12);
 L.control.zoom({ position: "bottomleft" }).addTo(map);

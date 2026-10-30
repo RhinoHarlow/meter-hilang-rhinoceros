@@ -35,7 +35,22 @@ function seed() {
       waktu_lapor: new Date(Date.now() - Math.random()*160*36e5).toISOString() }; });
   save();
 }
-try { rows = JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch { SHEET_URL ? (rows = []) : seed(); }
+
+try {
+  rows = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+
+  if (!Array.isArray(rows)) {
+    throw new Error('Format reports.json tidak valid');
+  }
+
+  console.log('Database lokal berhasil dibaca:', rows.length, 'laporan');
+
+} catch (error) {
+  console.error('DATABASE ERROR:', error.message);
+  console.error('Server dihentikan untuk melindungi data asli.');
+  process.exit(1);
+}
+
 
 // Koordinat dari Google Sheets berlokalitas Indonesia sering rusak, mis. "-725,259" (seharusnya -7.25259)
 // dan "11,267,816" (seharusnya 112.67816). Fungsi ini membaca normal dulu, lalu memperbaiki bila di luar Jawa Timur.
@@ -49,11 +64,49 @@ function coord(raw, kind) {
   if (d) { const v = (s.startsWith('-') ? -1 : 1) * (+d) / 10 ** (d.length - (kind === 'lat' ? 1 : 3)); if (inBox(v)) return v; }
   return n;
 }
-function pd(s) { // dd/mm/yyyy hh:mm, yyyy-mm-dd hh:mm, atau ISO
-  s = String(s || '').trim(); if (!s) return new Date();
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2})[:.](\d{2}))?/);
-  return m ? new Date(+m[3], m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0)) : new Date(s.replace(' ', 'T'));
+
+function pd(s) {
+  // Mendukung dd/mm/yyyy hh:mm dan format ISO.
+  if (s instanceof Date) {
+    return new Date(s.getTime());
+  }
+
+  s = String(s || '').trim();
+
+  if (!s) {
+    return new Date(NaN);
+  }
+
+  // Format Indonesia: 30/10/2026 12:30
+  const m = s.match(
+    /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2})[:.](\d{2}))?$/
+  );
+
+  if (m) {
+    const date = new Date(
+      Number(m[3]),
+      Number(m[2]) - 1,
+      Number(m[1]),
+      Number(m[4] || 0),
+      Number(m[5] || 0)
+    );
+
+    // Validasi tanggal agar tanggal tidak bergeser otomatis.
+    if (
+      date.getFullYear() !== Number(m[3]) ||
+      date.getMonth() !== Number(m[2]) - 1 ||
+      date.getDate() !== Number(m[1])
+    ) {
+      return new Date(NaN);
+    }
+
+    return date;
+  }
+
+  // Format ISO: 2026-10-30T12:30:00.000Z
+  return new Date(s.replace(' ', 'T'));
 }
+
 function parseCSV(t) {
   const out = []; let r = [], c = '', q = false; t = t.replace(/^\uFEFF/, '');
   const endRow = () => { r.push(c); c = ''; if (r.some(x => x.trim())) out.push(r); r = []; };
@@ -65,31 +118,243 @@ function parseCSV(t) {
   const h = (out.shift() || []).map(x => x.trim().toLowerCase());
   return out.map(r => Object.fromEntries(h.map((k, i) => [k, (r[i] || '').trim()])));
 }
+
 let lastSync = null;
+let syncRunning = false;
+
 async function sync() {
-  if (!SHEET_URL) throw new Error('SHEET_CSV_URL belum diisi di file .env');
-  const res = await fetch(SHEET_URL, { redirect: 'follow' });
-  if (!res.ok) throw new Error('Gagal mengambil Google Sheets: HTTP ' + res.status);
-  const ok = [], bad = [];
-  const csvText = await res.text();
-  console.log('Jumlah baris CSV terbaca:', parseCSV(csvText).length);
-  parseCSV(csvText).forEach((x, i) => { try { ok.push(clean(x)); } catch (e) { bad.push({ baris: i + 2, error: e.message }); } });
-  if (!ok.length) throw new Error('Tidak ada baris valid di Google Sheets (cek header kolom)');
-  rows = ok; save(); lastSync = { at: new Date().toISOString(), imported: ok.length, skipped: bad.length };
-  return { ...lastSync, bad: bad.slice(0, 10) };
+  if (syncRunning) {
+    throw new Error('Sinkronisasi masih berjalan');
+  }
+
+  if (!APPS_SCRIPT_URL || !APPS_SCRIPT_TOKEN) {
+    throw new Error('Konfigurasi Apps Script belum lengkap');
+  }
+
+  syncRunning = true;
+
+  try {
+    const url = new URL(APPS_SCRIPT_URL);
+    url.searchParams.set('token', APPS_SCRIPT_TOKEN);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      redirect: 'follow'
+    });
+
+    if (!response.ok) {
+      throw new Error('Google Sheets HTTP ' + response.status);
+    }
+
+    const result = await response.json();
+
+    if (!result.ok || !Array.isArray(result.records)) {
+      throw new Error(result.error || 'Data Google Sheets tidak valid');
+    }
+
+    const cloud = result.records.map(clean);
+
+    const localMap = new Map(
+      rows.map(r => [String(r.id), clean(r)])
+    );
+
+    const cloudMap = new Map(
+      cloud.map(r => [String(r.id), r])
+    );
+
+    const merged = new Map();
+    const ids = new Set([
+      ...localMap.keys(),
+      ...cloudMap.keys()
+    ]);
+
+    let downloaded = 0;
+    let uploaded = 0;
+    let archived = 0;
+    const errors = [];
+
+    const time = r => {
+      const d = new Date(
+        r.updated_at || r.deleted_at || r.waktu_lapor
+      );
+      return isNaN(d.getTime()) ? 0 : d.getTime();
+    };
+
+    for (const id of ids) {
+      const local = localMap.get(id);
+      const remote = cloudMap.get(id);
+
+      // Hanya ada di Google Sheets.
+      if (!local && remote) {
+        merged.set(id, remote);
+        downloaded++;
+        continue;
+      }
+
+      // Hanya ada di database lokal.
+      if (local && !remote) {
+        merged.set(id, local);
+
+        try {
+          await writeToGoogleSheets(local);
+          uploaded++;
+        } catch (e) {
+          errors.push({ id, error: e.message });
+        }
+        continue;
+      }
+
+      if (!local || !remote) continue;
+
+      // Jika salah satu sudah diarsipkan,
+      // status arsip harus menang.
+      if (local.is_deleted || remote.is_deleted) {
+        const chosen = local.is_deleted ? local : remote;
+
+        merged.set(id, chosen);
+
+        if (!local.is_deleted || !remote.is_deleted) {
+          try {
+            await writeToGoogleSheets({
+              ...chosen,
+              is_deleted: true,
+              deleted_at: chosen.deleted_at || new Date().toISOString(),
+              deleted_by: chosen.deleted_by || 'RHINOCEROS'
+            });
+
+            archived++;
+          } catch (e) {
+            errors.push({ id, error: e.message });
+          }
+        }
+
+        continue;
+      }
+
+      // Untuk laporan aktif, updated_at menentukan
+      // versi terbaru.
+      const localNewer = time(local) > time(remote);
+      const chosen = localNewer ? local : remote;
+
+      merged.set(id, chosen);
+
+      if (localNewer) {
+        try {
+          await writeToGoogleSheets(local);
+          uploaded++;
+        } catch (e) {
+          errors.push({ id, error: e.message });
+        }
+      } else if (time(remote) > time(local)) {
+        downloaded++;
+      }
+    }
+
+    // Simpan gabungan ke lokal secara atomik.
+    rows = Array.from(merged.values());
+    save();
+
+    lastSync = {
+      at: new Date().toISOString(),
+      total: rows.length,
+      downloaded,
+      uploaded,
+      archived,
+      failed: errors.length,
+      errors: errors.slice(0, 10)
+    };
+
+    return {
+      ...lastSync,
+      imported: downloaded,
+      skipped: errors.length
+    };
+
+  } finally {
+    syncRunning = false;
+  }
 }
 
-function clean(r) { // validasi satu laporan; lempar Error jika tidak valid
-  const jenis = String(r.jenis || '').toLowerCase().includes('curi') ? 'pencurian' : String(r.jenis || '').toLowerCase().includes('hilang') ? 'hilang' : null;
-  const lat = coord(r.lat, 'lat'), lng = coord(r.lng, 'lng'), t = pd(r.waktu_lapor);
-  if (!jenis) throw new Error('jenis harus "hilang" atau "pencurian"');
-  if (!(lat >= -90 && lat <= 90) || !(lng >= -180 && lng <= 180)) throw new Error('lat/lng tidak valid');
-  if (isNaN(t)) throw new Error('waktu_lapor tidak valid');
-  return { id: String(r.id_meter || r.id || 'MTR-' + crypto.randomBytes(3).toString('hex').toUpperCase()).slice(0, 40),
-    no_pelanggan: String(r.no_pelanggan || '-').slice(0, 40), jenis, kecamatan: String(r.kecamatan || nearest(lat, lng)).slice(0, 40), lat, lng, waktu_lapor: t.toISOString(),
-    petugas: String(r.petugas || '').slice(0, 40), status: String(r.status || '').slice(0, 40) };
-}
 
+
+
+function clean(r) {
+  const id = String(r.id_meter || r.id || '').trim();
+
+  // Jangan membuat ID acak saat sinkronisasi.
+  if (!id) {
+    throw new Error('ID laporan kosong');
+  }
+
+  const jenisRaw = String(r.jenis || '').toLowerCase();
+
+  const jenis = jenisRaw.includes('curi')
+    ? 'pencurian'
+    : jenisRaw.includes('hilang')
+      ? 'hilang'
+      : null;
+
+  if (!jenis) {
+    throw new Error('Jenis laporan tidak valid: ' + id);
+  }
+
+  const lat = coord(r.lat, 'lat');
+  const lng = coord(r.lng, 'lng');
+
+  if (
+    !Number.isFinite(lat) ||
+    lat < -90 || lat > 90 ||
+    !Number.isFinite(lng) ||
+    lng < -180 || lng > 180
+  ) {
+    throw new Error('Koordinat tidak valid: ' + id);
+  }
+
+  const t = pd(r.waktu_lapor);
+
+  if (isNaN(t.getTime())) {
+    throw new Error('Waktu laporan tidak valid: ' + id);
+  }
+
+  const isDeleted =
+    r.is_deleted === true ||
+    String(r.is_deleted).toLowerCase() === 'true' ||
+    String(r.is_deleted) === '1';
+
+  const deletedAt = r.deleted_at
+    ? pd(r.deleted_at)
+    : null;
+
+  if (deletedAt && isNaN(deletedAt.getTime())) {
+    throw new Error('Waktu arsip tidak valid: ' + id);
+  }
+
+  const updatedAt = r.updated_at
+    ? pd(r.updated_at)
+    : t;
+
+  if (isNaN(updatedAt.getTime())) {
+    throw new Error('Waktu pembaruan tidak valid: ' + id);
+  }
+
+  return {
+    id,
+    no_pelanggan: String(r.no_pelanggan || '-').slice(0, 40),
+    jenis,
+    kecamatan: String(
+      r.kecamatan || nearest(lat, lng)
+    ).slice(0, 40),
+    lat,
+    lng,
+    waktu_lapor: t.toISOString(),
+    petugas: String(r.petugas || '').slice(0, 40),
+    status: String(r.status || 'Baru').slice(0, 40),
+    is_deleted: isDeleted,
+    deleted_at: deletedAt ? deletedAt.toISOString() : '',
+    deleted_by: String(r.deleted_by || '').slice(0, 40),
+    updated_at: updatedAt.toISOString()
+  };
+}
 async function writeToGoogleSheets(report) {
   if (!APPS_SCRIPT_URL || !APPS_SCRIPT_TOKEN) {
     throw new Error('Konfigurasi Apps Script belum lengkap');
@@ -98,26 +363,58 @@ async function writeToGoogleSheets(report) {
   const url = new URL(APPS_SCRIPT_URL);
   url.searchParams.set('token', APPS_SCRIPT_TOKEN);
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'text/plain;charset=utf-8'
-    },
-    body: JSON.stringify({
-  ...report,
-  id_meter: report.id
-}),
-    redirect: 'follow'
-  });
+  async function post(data) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8'
+      },
+      body: JSON.stringify(data),
+      redirect: 'follow'
+    });
 
-  const result = await response.json();
+    const result = await response.json();
 
-  if (!result.ok) {
-    throw new Error(result.error || 'Gagal menulis ke Google Sheets');
+    if (!result.ok) {
+      throw new Error(result.error || 'Gagal mengirim data');
+    }
+
+    return result;
   }
 
-  return result;
+  const payload = {
+    ...report,
+    id_meter: report.id
+  };
+
+  if (report.is_deleted) {
+    try {
+      await post({
+        ...payload,
+        is_deleted: false,
+        action: 'upsert'
+      });
+    } catch (error) {
+      // Jika sudah diarsipkan di cloud, lanjutkan
+      // untuk memastikan status arsip tetap konsisten.
+      if (!/sudah diarsipkan/i.test(error.message)) {
+        throw error;
+      }
+    }
+
+    return post({
+      action: 'archive',
+      id_meter: report.id,
+      deleted_by: report.deleted_by || 'RHINOCEROS'
+    });
+  }
+
+  return post({
+    ...payload,
+    action: 'upsert'
+  });
 }
+
 
 // ---------- http ----------
 const MIME = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8', '.json':'application/json', '.png':'image/png', '.svg':'image/svg+xml', '.ico':'image/x-icon' };
@@ -186,10 +483,78 @@ if (p === '/api/reports' && m === 'POST') {
     if (!ok.length) return send(res, 400, { error: 'Tidak ada baris valid', bad: bad.slice(0, 10) });
     rows = b.mode === 'append' ? rows.concat(ok) : ok; save(); return send(res, 200, { imported: ok.length, skipped: bad.length, bad: bad.slice(0, 10) });
   }
-  const d = p.match(/^\/api\/reports\/(.+)$/);
-  if (d && m === 'DELETE') { const id = decodeURIComponent(d[1]), n = rows.length; rows = rows.filter(r => r.id !== id); save(); return send(res, n === rows.length ? 404 : 200, { deleted: n - rows.length }); }
-  send(res, 404, { error: 'Endpoint tidak ditemukan' });
+
+const d = p.match(/^\/api\/reports\/(.+)$/);
+
+if (d && m === 'DELETE') {
+  const id = decodeURIComponent(d[1]);
+
+  const index = rows.findIndex(
+    r => String(r.id) === id
+  );
+
+  if (index === -1) {
+    return send(res, 404, {
+      error: 'Laporan tidak ditemukan'
+    });
+  }
+
+  const report = rows[index];
+
+  // Jangan mengarsipkan ulang laporan yang sudah diarsipkan.
+  if (report.is_deleted) {
+    return send(res, 200, {
+      archived: true,
+      already_archived: true,
+      id: id
+    });
+  }
+
+  const now = new Date().toISOString();
+
+  // Soft Delete: data tidak dihapus dari database lokal.
+  rows[index] = {
+    ...report,
+    is_deleted: true,
+    deleted_at: now,
+    deleted_by: 'RHINOCEROS',
+    updated_at: now
+  };
+
+  // Simpan lokal terlebih dahulu.
+  save();
+
+  // Kirim perubahan arsip ke Google Sheets.
+  try {
+    await writeToGoogleSheets(rows[index]);
+
+    return send(res, 200, {
+      archived: true,
+      synced_to_sheets: true,
+      id: id,
+      message: 'Laporan berhasil diarsipkan'
+    });
+
+  } catch (error) {
+    console.error(
+      'Sinkronisasi arsip tertunda:',
+      error.message
+    );
+
+    return send(res, 200, {
+      archived: true,
+      synced_to_sheets: false,
+      id: id,
+      message: 'Arsip tersimpan lokal dan menunggu sinkronisasi'
+    });
+  }
 }
+
+send(res, 404, {
+  error: 'Endpoint tidak ditemukan'
+});
+
+} // PENUTUP FUNGSI api()
 
 http.createServer(async (req, res) => {
   try {
@@ -201,7 +566,23 @@ http.createServer(async (req, res) => {
   } catch (e) { send(res, 400, { error: e.message }); }
 }).listen(PORT, () => console.log(`Dashboard Meter Hilang: http://localhost:${PORT}  (data: ${rows.length} laporan${API_KEY ? ', API key aktif' : ''})`));
 
-if (SHEET_URL) {
-  const run = () => sync().then(r => console.log(`Sinkron Google Sheets: ${r.imported} baris (${r.skipped} dilewati)`)).catch(e => console.log('Sinkron gagal:', e.message));
-  run(); setInterval(run, SYNC_MIN * 60000);
+
+/*
+if (APPS_SCRIPT_URL && APPS_SCRIPT_TOKEN) {
+  const run = () => {
+    sync()
+      .then(r => console.log(
+        'Sinkronisasi RHINOCEROS:',
+        JSON.stringify(r, null, 2)
+      ))
+      .catch(e => console.error(
+        'Sinkronisasi gagal:',
+        e.message
+      ));
+  };
+
+  setTimeout(run, 3000);
+  setInterval(run, SYNC_MIN * 60000);
 }
+*/
+

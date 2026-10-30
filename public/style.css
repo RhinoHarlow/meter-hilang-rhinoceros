@@ -42,3 +42,82 @@ body{background:var(--bg);color:var(--tx);font:13px/1.4 system-ui,-apple-system,
 @media(max-width:1000px){#R{display:none}#top{left:calc(50% + 151px);max-width:calc(100% - 340px)}}
 @media(max-width:700px){#L{width:auto;right:12px;bottom:auto;max-height:42%}#top{left:50%;top:auto;bottom:12px;max-width:calc(100% - 24px)}.leaflet-bottom.leaflet-left{margin-left:0;margin-bottom:70px}}
 .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.95) contrast(.9) saturate(.7)}
+/* ===== POP-UP ALARM RHINOCEROS ===== */
+.alarm-popup {
+  position: fixed;
+  top: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(440px, calc(100vw - 32px));
+  padding: 18px;
+  border: 2px solid #f43f5e;
+  border-radius: 14px;
+  background: #18181b;
+  color: #fff;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  z-index: 10000;
+  animation: alarmAppear 0.3s ease-out;
+}
+
+.alarm-popup[hidden] {
+  display: none !important;
+}
+
+.alarm-popup-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  color: #f43f5e;
+}
+
+.alarm-popup-header strong {
+  flex: 1;
+  font-size: 16px;
+}
+
+.alarm-popup-header button {
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.alarm-popup-message {
+  margin-bottom: 8px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.alarm-popup-detail {
+  margin-bottom: 14px;
+  color: #d4d4d8;
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+#alarmFocus {
+  width: 100%;
+  justify-content: center;
+}
+
+.alarm-popup.pencurian {
+  border-color: #fb923c;
+}
+
+.alarm-popup.pencurian .alarm-popup-header {
+  color: #fb923c;
+}
+
+@keyframes alarmAppear {
+  from {
+    opacity: 0;
+    margin-top: -12px;
+  }
+  to {
+    opacity: 1;
+    margin-top: 0;
+  }
+}

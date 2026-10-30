@@ -1,16 +1,31 @@
+
 <!DOCTYPE html>
-<html lang="id"><head><meta charset="utf-8">
+<html lang="id">
+<head>
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Surya Sembada GIS – Meter Hilang &amp; Pencurian Air</title>
+
+<title>RHINOCEROS – Geospatial Monitoring System</title>
+
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
 <link rel="stylesheet" href="style.css">
-</head><body>
+</head>
+<body>
+
 <div id="map"></div>
 
 <div class="pn" id="L">
- <div class="h"><div class="logo">💧</div><div><b>SURYA SEMBADA</b><small>METER HILANG &amp; PENCURIAN AIR</small></div></div>
+ <div class="h">
+  <div class="logo">💧</div>
+  <div>
+   <b>RHINOCEROS</b>
+   <small>GEOSPATIAL MONITORING SYSTEM</small>
+  </div>
+ </div>
+
  <div class="cat">KATALOG LAYER</div>
  <div id="layers"></div>
+
  <div class="tools">
   <button class="btn red" id="add">⊕ Input Laporan (klik peta)</button>
   <button class="btn" id="imp">⬆ Impor Data CSV</button>
@@ -19,21 +34,66 @@
   <a class="btn" href="/api/export.csv" download="meter-hilang.csv">⬇ Ekspor Data (CSV)</a>
   <input type="file" id="file" accept=".csv,text/csv" hidden>
  </div>
+
  <div class="msg" id="info">Memuat data dari server…</div>
 </div>
 
 <div class="pn" id="top">
- <div class="bar al"><span class="k"><span class="dot" style="background:var(--red)"></span><b style="background:none;border:0;padding:0;color:var(--red)">EWS: <span id="ewsn">0</span> Kasus</b></span><span class="crit" id="crit">0 Kritis</span><button class="btn" id="bz">Zoom Terparah</button></div>
+ <div class="bar al">
+  <span class="k">
+   <span class="dot" style="background:var(--red)"></span>
+   <b style="background:none;border:0;padding:0;color:var(--red)">
+    EWS: <span id="ewsn">0</span> Kasus
+   </b>
+  </span>
+  <span class="crit" id="crit">0 Kritis</span>
+  <button class="btn" id="bz">Zoom Terparah</button>
+ </div>
  <div class="bar" id="kp"></div>
 </div>
 
-<div class="pn" id="R"><div id="ai">
- <div class="t"><div class="logo">✦</div><div><b>AI SPATIAL COPILOT</b><br><small style="color:var(--mu)">Surya Sembada • Meter Agent</small></div></div>
- <div id="chat"><div class="m">Halo! Tanyakan sebaran meter hilang, kasus pencurian air, atau wilayah paling rawan.</div></div>
- <div class="chips"><span>Wilayah paling rawan</span><span>Berapa meter hilang?</span><span>Berapa kasus pencurian air?</span></div>
- <div class="in"><input id="q" placeholder="Tanyakan analisis geospasial…"><button class="btn" id="sd">➤</button></div>
-</div></div>
+<div id="alarmPopup" class="alarm-popup" role="alert" aria-live="assertive" hidden>
+ <div class="alarm-popup-header">
+  <span id="alarmIcon">🚨</span>
+  <strong id="alarmTitle">LAPORAN BARU</strong>
+  <button type="button" id="alarmClose" aria-label="Tutup alarm">✕</button>
+ </div>
+ <div id="alarmMessage" class="alarm-popup-message"></div>
+ <div id="alarmDetail" class="alarm-popup-detail"></div>
+ <button type="button" id="alarmFocus" class="btn">📍 Lihat Lokasi di Peta</button>
+</div>
+
+<div class="pn" id="R">
+ <div id="ai">
+  <div class="t">
+   <div class="logo">✦</div>
+   <div>
+    <b>AI SPATIAL COPILOT</b><br>
+    <small style="color:var(--mu)">RHINOCEROS • METER AGENT</small>
+   </div>
+  </div>
+
+  <div id="chat">
+   <div class="m">
+    Halo! Tanyakan sebaran meter hilang, kasus pencurian air, atau wilayah paling rawan.
+   </div>
+  </div>
+
+  <div class="chips">
+   <span>Wilayah paling rawan</span>
+   <span>Berapa meter hilang?</span>
+   <span>Berapa kasus pencurian air?</span>
+  </div>
+
+  <div class="in">
+   <input id="q" placeholder="Tanyakan analisis geospasial…">
+   <button class="btn" id="sd">➤</button>
+  </div>
+ </div>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script src="app.js"></script>
-</body></html>
+
+</body>
+</html>
